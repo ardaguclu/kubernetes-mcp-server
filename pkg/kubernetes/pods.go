@@ -249,12 +249,22 @@ func (k *Kubernetes) PodsTop(ctx context.Context, options PodsTopOptions) (*metr
 		namespace = k.NamespaceOrDefault(namespace)
 	}
 
-	if err := k.CanClientAccess(ctx, &schema.GroupVersionResource{
-		Group:    "metrics.k8s.io",
-		Version:  "v1beta1",
-		Resource: "podmetrics",
-	}, options.Name, namespace, "get", ""); err != nil {
-		return nil, err
+	if options.Name != "" {
+		if err := k.CanClientAccess(ctx, &schema.GroupVersionResource{
+			Group:    "metrics.k8s.io",
+			Version:  "v1beta1",
+			Resource: "podmetrics",
+		}, options.Name, namespace, "get", ""); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := k.CanClientAccess(ctx, &schema.GroupVersionResource{
+			Group:    "metrics.k8s.io",
+			Version:  "v1beta1",
+			Resource: "podmetrics",
+		}, "", namespace, "list", ""); err != nil {
+			return nil, err
+		}
 	}
 
 	return k.manager.accessControlClientSet.PodsMetricses(ctx, namespace, options.Name, options.ListOptions)
