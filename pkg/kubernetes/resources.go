@@ -3,9 +3,10 @@ package kubernetes
 import (
 	"context"
 	"fmt"
-	"k8s.io/apimachinery/pkg/runtime"
 	"regexp"
 	"strings"
+
+	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/manusa/kubernetes-mcp-server/pkg/version"
 	authv1 "k8s.io/api/authorization/v1"
@@ -39,6 +40,11 @@ func (k *Kubernetes) ResourcesList(ctx context.Context, gvk *schema.GroupVersion
 	if isNamespaced && !k.canIUse(ctx, gvr, namespace, "list") && namespace == "" {
 		namespace = k.manager.configuredNamespace()
 	}
+
+	if err := k.canClientAccess(ctx, gvr, "", namespace, "list", ""); err != nil {
+		return nil, err
+	}
+
 	if options.AsTable {
 		return k.resourcesListAsTable(ctx, gvk, gvr, namespace, options)
 	}
@@ -55,6 +61,11 @@ func (k *Kubernetes) ResourcesGet(ctx context.Context, gvk *schema.GroupVersionK
 	if namespaced, nsErr := k.isNamespaced(gvk); nsErr == nil && namespaced {
 		namespace = k.NamespaceOrDefault(namespace)
 	}
+
+	if err := k.canClientAccess(ctx, gvr, name, namespace, "get", ""); err != nil {
+		return nil, err
+	}
+
 	return k.manager.dynamicClient.Resource(*gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 }
 
@@ -82,6 +93,11 @@ func (k *Kubernetes) ResourcesDelete(ctx context.Context, gvk *schema.GroupVersi
 	if namespaced, nsErr := k.isNamespaced(gvk); nsErr == nil && namespaced {
 		namespace = k.NamespaceOrDefault(namespace)
 	}
+
+	if err := k.canClientAccess(ctx, gvr, name, namespace, "delete", ""); err != nil {
+		return err
+	}
+
 	return k.manager.dynamicClient.Resource(*gvr).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 }
 
@@ -145,6 +161,11 @@ func (k *Kubernetes) resourcesCreateOrUpdate(ctx context.Context, resources []*u
 		if namespaced, nsErr := k.isNamespaced(&gvk); nsErr == nil && namespaced {
 			namespace = k.NamespaceOrDefault(namespace)
 		}
+
+		if err := k.canClientAccess(ctx, gvr, obj.GetName(), namespace, "patch", ""); err != nil {
+			return nil, err
+		}
+
 		resources[i], rErr = k.manager.dynamicClient.Resource(*gvr).Namespace(namespace).Apply(ctx, obj.GetName(), obj, metav1.ApplyOptions{
 			FieldManager: version.BinaryName,
 		})
@@ -185,6 +206,55 @@ func (k *Kubernetes) supportsGroupVersion(groupVersion string) bool {
 		return false
 	}
 	return true
+}
+
+func (k *Kubernetes) canClientAccess(ctx context.Context, gvr *schema.GroupVersionResource, resourceName, namespace, verb, subResource string) error {
+	if !k.manager.staticConfig.RequireOAuth {
+		return nil
+	}
+
+	userName := ctx.Value("X-User-Name")
+	if userName == nil {
+		return fmt.Errorf("user name is not set")
+	}
+	uid := ctx.Value("X-User-UID")
+	if uid == nil {
+		return fmt.Errorf("user uid is not set")
+	}
+	groups := ctx.Value("X-User-Groups")
+	if groups == nil {
+		return fmt.Errorf("user groups are not set")
+	}
+	userGroups := strings.Split(groups.(string), ",")
+
+	accessReview, err := k.manager.accessControlClientSet.SubjectAccessReviews()
+	if err != nil {
+		return err
+	}
+	response, err := accessReview.Create(ctx, &authv1.SubjectAccessReview{
+		Spec: authv1.SubjectAccessReviewSpec{
+			ResourceAttributes: &authv1.ResourceAttributes{
+				Namespace:   namespace,
+				Verb:        verb,
+				Group:       gvr.Group,
+				Version:     gvr.Version,
+				Resource:    gvr.Resource,
+				Subresource: subResource,
+				Name:        resourceName,
+			},
+			User:   userName.(string),
+			Groups: userGroups,
+			UID:    uid.(string),
+		},
+	}, metav1.CreateOptions{})
+
+	if err != nil {
+		return err
+	}
+	if !response.Status.Allowed {
+		return fmt.Errorf("user %q does not have permission to %s %s", userName, verb, resourceName)
+	}
+	return nil
 }
 
 func (k *Kubernetes) canIUse(ctx context.Context, gvr *schema.GroupVersionResource, namespace, verb string) bool {

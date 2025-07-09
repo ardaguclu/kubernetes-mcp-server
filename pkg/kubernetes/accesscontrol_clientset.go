@@ -113,6 +113,14 @@ func (a *AccessControlClientset) SelfSubjectAccessReviews() (authorizationv1.Sel
 	return a.delegate.AuthorizationV1().SelfSubjectAccessReviews(), nil
 }
 
+func (a *AccessControlClientset) SubjectAccessReviews() (authorizationv1.SubjectAccessReviewInterface, error) {
+	gvk := &schema.GroupVersionKind{Group: authorizationv1api.GroupName, Version: authorizationv1api.SchemeGroupVersion.Version, Kind: "SubjectAccessReview"}
+	if !isAllowed(a.staticConfig, gvk) {
+		return nil, isNotAllowedError(gvk)
+	}
+	return a.delegate.AuthorizationV1().SubjectAccessReviews(), nil
+}
+
 // TokenReview returns TokenReviewInterface
 func (a *AccessControlClientset) TokenReview() (authenticationv1.TokenReviewInterface, error) {
 	gvk := &schema.GroupVersionKind{Group: authenticationv1api.GroupName, Version: authorizationv1api.SchemeGroupVersion.Version, Kind: "TokenReview"}

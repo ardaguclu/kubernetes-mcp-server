@@ -107,9 +107,9 @@ func (s *Server) ServeHTTP(httpServer *http.Server) *server.StreamableHTTPServer
 
 // VerifyToken verifies the given token with the audience by
 // sending an TokenReview request to API Server.
-func (s *Server) VerifyToken(ctx context.Context, token string, audience string) (*authenticationapiv1.UserInfo, []string, error) {
+func (s *Server) VerifyToken(ctx context.Context, token string, audience string) (*authenticationapiv1.UserInfo, error) {
 	if s.k == nil {
-		return nil, nil, fmt.Errorf("kubernetes manager is not initialized")
+		return nil, fmt.Errorf("kubernetes manager is not initialized")
 	}
 	return s.k.VerifyToken(ctx, token, audience)
 }

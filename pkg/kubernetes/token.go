@@ -7,10 +7,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func (m *Manager) VerifyToken(ctx context.Context, token, audience string) (*authenticationv1api.UserInfo, []string, error) {
+func (m *Manager) VerifyToken(ctx context.Context, token, audience string) (*authenticationv1api.UserInfo, error) {
 	tokenReviewClient, err := m.accessControlClientSet.TokenReview()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	tokenReview := &authenticationv1api.TokenReview{
 		TypeMeta: metav1.TypeMeta{
@@ -25,15 +25,15 @@ func (m *Manager) VerifyToken(ctx context.Context, token, audience string) (*aut
 
 	result, err := tokenReviewClient.Create(ctx, tokenReview, metav1.CreateOptions{})
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create token review: %v", err)
+		return nil, fmt.Errorf("failed to create token review: %v", err)
 	}
 
 	if !result.Status.Authenticated {
 		if result.Status.Error != "" {
-			return nil, nil, fmt.Errorf("token authentication failed: %s", result.Status.Error)
+			return nil, fmt.Errorf("token authentication failed: %s", result.Status.Error)
 		}
-		return nil, nil, fmt.Errorf("token authentication failed")
+		return nil, fmt.Errorf("token authentication failed")
 	}
 
-	return &result.Status.User, result.Status.Audiences, nil
+	return &result.Status.User, nil
 }

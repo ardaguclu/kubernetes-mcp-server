@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -52,7 +53,7 @@ func AuthorizationMiddleware(requireOAuth bool, mcpServer *mcp.Server) func(http
 			}
 
 			// Validate token using Kubernetes TokenReview API
-			_, _, err = mcpServer.VerifyToken(r.Context(), token, Audience)
+			userInfo, err := mcpServer.VerifyToken(r.Context(), token, Audience)
 			if err != nil {
 				klog.V(1).Infof("Authentication failed - token validation error: %s %s from %s, error: %v", r.Method, r.URL.Path, r.RemoteAddr, err)
 
@@ -60,6 +61,23 @@ func AuthorizationMiddleware(requireOAuth bool, mcpServer *mcp.Server) func(http
 				http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
 				return
 			}
+
+			if userInfo == nil {
+				klog.V(1).Infof("Authentication failed - user info is nil: %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+				w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer realm="Kubernetes MCP Server", audience=%s, error="invalid_token"`, Audience))
+				http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+				return
+			}
+
+			ctx := r.Context()
+			ctx = context.WithValue(ctx, "X-User-Name", userInfo.Username)
+			ctx = context.WithValue(ctx, "X-User-UID", userInfo.UID)
+
+			if len(userInfo.Groups) > 0 {
+				ctx = context.WithValue(ctx, "X-User-Groups", strings.Join(userInfo.Groups, ","))
+			}
+
+			r = r.WithContext(ctx)
 
 			next.ServeHTTP(w, r)
 		})

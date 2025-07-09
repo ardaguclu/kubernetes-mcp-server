@@ -61,6 +61,14 @@ func (k *Kubernetes) PodsDelete(ctx context.Context, namespace, name string) (st
 
 	// Delete managed service
 	if isManaged {
+		if err = k.canClientAccess(ctx, &schema.GroupVersionResource{
+			Group:    "",
+			Version:  "v1",
+			Resource: "services",
+		}, name, namespace, "list", ""); err != nil {
+			return "", err
+		}
+
 		services, err := k.manager.accessControlClientSet.Services(namespace)
 		if err != nil {
 			return "", err
@@ -69,6 +77,13 @@ func (k *Kubernetes) PodsDelete(ctx context.Context, namespace, name string) (st
 			LabelSelector: managedLabelSelector.String(),
 		}); sl != nil {
 			for _, svc := range sl.Items {
+				if err = k.canClientAccess(ctx, &schema.GroupVersionResource{
+					Group:    "",
+					Version:  "v1",
+					Resource: "services",
+				}, svc.Name, namespace, "delete", ""); err != nil {
+					return "", err
+				}
 				_ = services.Delete(ctx, svc.Name, metav1.DeleteOptions{})
 			}
 		}
@@ -76,6 +91,14 @@ func (k *Kubernetes) PodsDelete(ctx context.Context, namespace, name string) (st
 
 	// Delete managed Route
 	if isManaged && k.supportsGroupVersion("route.openshift.io/v1") {
+		if err = k.canClientAccess(ctx, &schema.GroupVersionResource{
+			Group:    "route.openshift.io",
+			Version:  "v1",
+			Resource: "routes",
+		}, name, namespace, "list", ""); err != nil {
+			return "", err
+		}
+
 		routeResources := k.manager.dynamicClient.
 			Resource(schema.GroupVersionResource{Group: "route.openshift.io", Version: "v1", Resource: "routes"}).
 			Namespace(namespace)
@@ -83,6 +106,13 @@ func (k *Kubernetes) PodsDelete(ctx context.Context, namespace, name string) (st
 			LabelSelector: managedLabelSelector.String(),
 		}); rl != nil {
 			for _, route := range rl.Items {
+				if err = k.canClientAccess(ctx, &schema.GroupVersionResource{
+					Group:    "route.openshift.io",
+					Version:  "v1",
+					Resource: "routes",
+				}, route.GetName(), namespace, "delete", ""); err != nil {
+					return "", err
+				}
 				_ = routeResources.Delete(ctx, route.GetName(), metav1.DeleteOptions{})
 			}
 		}
@@ -94,8 +124,22 @@ func (k *Kubernetes) PodsDelete(ctx context.Context, namespace, name string) (st
 
 func (k *Kubernetes) PodsLog(ctx context.Context, namespace, name, container string) (string, error) {
 	tailLines := int64(256)
+	if err := k.canClientAccess(ctx, &schema.GroupVersionResource{
+		Group:    "",
+		Version:  "v1",
+		Resource: "pods",
+	}, name, namespace, "get", ""); err != nil {
+		return "", err
+	}
 	pods, err := k.manager.accessControlClientSet.Pods(k.NamespaceOrDefault(namespace))
 	if err != nil {
+		return "", err
+	}
+	if err := k.canClientAccess(ctx, &schema.GroupVersionResource{
+		Group:    "",
+		Version:  "v1",
+		Resource: "pods",
+	}, name, namespace, "get", "logs"); err != nil {
 		return "", err
 	}
 	req := pods.GetLogs(name, &v1.PodLogOptions{
@@ -204,6 +248,15 @@ func (k *Kubernetes) PodsTop(ctx context.Context, options PodsTopOptions) (*metr
 	} else {
 		namespace = k.NamespaceOrDefault(namespace)
 	}
+
+	if err := k.canClientAccess(ctx, &schema.GroupVersionResource{
+		Group:    "metrics.k8s.io",
+		Version:  "v1beta1",
+		Resource: "podmetrics",
+	}, options.Name, namespace, "get", ""); err != nil {
+		return nil, err
+	}
+
 	return k.manager.accessControlClientSet.PodsMetricses(ctx, namespace, options.Name, options.ListOptions)
 }
 
@@ -211,6 +264,13 @@ func (k *Kubernetes) PodsExec(ctx context.Context, namespace, name, container st
 	namespace = k.NamespaceOrDefault(namespace)
 	pods, err := k.manager.accessControlClientSet.Pods(namespace)
 	if err != nil {
+		return "", err
+	}
+	if err := k.canClientAccess(ctx, &schema.GroupVersionResource{
+		Group:    "",
+		Version:  "v1",
+		Resource: "pods",
+	}, name, namespace, "get", ""); err != nil {
 		return "", err
 	}
 	pod, err := pods.Get(ctx, name, metav1.GetOptions{})
@@ -229,6 +289,13 @@ func (k *Kubernetes) PodsExec(ctx context.Context, namespace, name, container st
 		Command:   command,
 		Stdout:    true,
 		Stderr:    true,
+	}
+	if err := k.canClientAccess(ctx, &schema.GroupVersionResource{
+		Group:    "",
+		Version:  "v1",
+		Resource: "pods",
+	}, name, namespace, "get", "exec"); err != nil {
+		return "", err
 	}
 	executor, err := k.manager.accessControlClientSet.PodsExec(namespace, name, podExecOptions)
 	if err != nil {
