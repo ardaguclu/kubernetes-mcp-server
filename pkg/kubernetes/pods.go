@@ -61,7 +61,7 @@ func (k *Kubernetes) PodsDelete(ctx context.Context, namespace, name string) (st
 
 	// Delete managed service
 	if isManaged {
-		if err = k.canClientAccess(ctx, &schema.GroupVersionResource{
+		if err = k.CanClientAccess(ctx, &schema.GroupVersionResource{
 			Group:    "",
 			Version:  "v1",
 			Resource: "services",
@@ -77,7 +77,7 @@ func (k *Kubernetes) PodsDelete(ctx context.Context, namespace, name string) (st
 			LabelSelector: managedLabelSelector.String(),
 		}); sl != nil {
 			for _, svc := range sl.Items {
-				if err = k.canClientAccess(ctx, &schema.GroupVersionResource{
+				if err = k.CanClientAccess(ctx, &schema.GroupVersionResource{
 					Group:    "",
 					Version:  "v1",
 					Resource: "services",
@@ -91,7 +91,7 @@ func (k *Kubernetes) PodsDelete(ctx context.Context, namespace, name string) (st
 
 	// Delete managed Route
 	if isManaged && k.supportsGroupVersion("route.openshift.io/v1") {
-		if err = k.canClientAccess(ctx, &schema.GroupVersionResource{
+		if err = k.CanClientAccess(ctx, &schema.GroupVersionResource{
 			Group:    "route.openshift.io",
 			Version:  "v1",
 			Resource: "routes",
@@ -106,7 +106,7 @@ func (k *Kubernetes) PodsDelete(ctx context.Context, namespace, name string) (st
 			LabelSelector: managedLabelSelector.String(),
 		}); rl != nil {
 			for _, route := range rl.Items {
-				if err = k.canClientAccess(ctx, &schema.GroupVersionResource{
+				if err = k.CanClientAccess(ctx, &schema.GroupVersionResource{
 					Group:    "route.openshift.io",
 					Version:  "v1",
 					Resource: "routes",
@@ -124,7 +124,7 @@ func (k *Kubernetes) PodsDelete(ctx context.Context, namespace, name string) (st
 
 func (k *Kubernetes) PodsLog(ctx context.Context, namespace, name, container string) (string, error) {
 	tailLines := int64(256)
-	if err := k.canClientAccess(ctx, &schema.GroupVersionResource{
+	if err := k.CanClientAccess(ctx, &schema.GroupVersionResource{
 		Group:    "",
 		Version:  "v1",
 		Resource: "pods",
@@ -135,7 +135,7 @@ func (k *Kubernetes) PodsLog(ctx context.Context, namespace, name, container str
 	if err != nil {
 		return "", err
 	}
-	if err := k.canClientAccess(ctx, &schema.GroupVersionResource{
+	if err := k.CanClientAccess(ctx, &schema.GroupVersionResource{
 		Group:    "",
 		Version:  "v1",
 		Resource: "pods",
@@ -249,7 +249,7 @@ func (k *Kubernetes) PodsTop(ctx context.Context, options PodsTopOptions) (*metr
 		namespace = k.NamespaceOrDefault(namespace)
 	}
 
-	if err := k.canClientAccess(ctx, &schema.GroupVersionResource{
+	if err := k.CanClientAccess(ctx, &schema.GroupVersionResource{
 		Group:    "metrics.k8s.io",
 		Version:  "v1beta1",
 		Resource: "podmetrics",
@@ -266,7 +266,7 @@ func (k *Kubernetes) PodsExec(ctx context.Context, namespace, name, container st
 	if err != nil {
 		return "", err
 	}
-	if err := k.canClientAccess(ctx, &schema.GroupVersionResource{
+	if err := k.CanClientAccess(ctx, &schema.GroupVersionResource{
 		Group:    "",
 		Version:  "v1",
 		Resource: "pods",
@@ -290,7 +290,7 @@ func (k *Kubernetes) PodsExec(ctx context.Context, namespace, name, container st
 		Stdout:    true,
 		Stderr:    true,
 	}
-	if err := k.canClientAccess(ctx, &schema.GroupVersionResource{
+	if err := k.CanClientAccess(ctx, &schema.GroupVersionResource{
 		Group:    "",
 		Version:  "v1",
 		Resource: "pods",

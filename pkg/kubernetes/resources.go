@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/klog/v2"
 
 	"github.com/manusa/kubernetes-mcp-server/pkg/version"
 	authv1 "k8s.io/api/authorization/v1"
@@ -30,7 +31,7 @@ type ResourceListOptions struct {
 }
 
 func (k *Kubernetes) ResourcesList(ctx context.Context, gvk *schema.GroupVersionKind, namespace string, options ResourceListOptions) (runtime.Unstructured, error) {
-	gvr, err := k.resourceFor(gvk)
+	gvr, err := k.ResourceFor(gvk)
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +42,7 @@ func (k *Kubernetes) ResourcesList(ctx context.Context, gvk *schema.GroupVersion
 		namespace = k.manager.configuredNamespace()
 	}
 
-	if err := k.canClientAccess(ctx, gvr, "", namespace, "list", ""); err != nil {
+	if err := k.CanClientAccess(ctx, gvr, "", namespace, "list", ""); err != nil {
 		return nil, err
 	}
 
@@ -52,7 +53,7 @@ func (k *Kubernetes) ResourcesList(ctx context.Context, gvk *schema.GroupVersion
 }
 
 func (k *Kubernetes) ResourcesGet(ctx context.Context, gvk *schema.GroupVersionKind, namespace, name string) (*unstructured.Unstructured, error) {
-	gvr, err := k.resourceFor(gvk)
+	gvr, err := k.ResourceFor(gvk)
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +63,7 @@ func (k *Kubernetes) ResourcesGet(ctx context.Context, gvk *schema.GroupVersionK
 		namespace = k.NamespaceOrDefault(namespace)
 	}
 
-	if err := k.canClientAccess(ctx, gvr, name, namespace, "get", ""); err != nil {
+	if err := k.CanClientAccess(ctx, gvr, name, namespace, "get", ""); err != nil {
 		return nil, err
 	}
 
@@ -84,7 +85,7 @@ func (k *Kubernetes) ResourcesCreateOrUpdate(ctx context.Context, resource strin
 }
 
 func (k *Kubernetes) ResourcesDelete(ctx context.Context, gvk *schema.GroupVersionKind, namespace, name string) error {
-	gvr, err := k.resourceFor(gvk)
+	gvr, err := k.ResourceFor(gvk)
 	if err != nil {
 		return err
 	}
@@ -94,7 +95,7 @@ func (k *Kubernetes) ResourcesDelete(ctx context.Context, gvk *schema.GroupVersi
 		namespace = k.NamespaceOrDefault(namespace)
 	}
 
-	if err := k.canClientAccess(ctx, gvr, name, namespace, "delete", ""); err != nil {
+	if err := k.CanClientAccess(ctx, gvr, name, namespace, "delete", ""); err != nil {
 		return err
 	}
 
@@ -151,7 +152,7 @@ func (k *Kubernetes) resourcesListAsTable(ctx context.Context, gvk *schema.Group
 func (k *Kubernetes) resourcesCreateOrUpdate(ctx context.Context, resources []*unstructured.Unstructured) ([]*unstructured.Unstructured, error) {
 	for i, obj := range resources {
 		gvk := obj.GroupVersionKind()
-		gvr, rErr := k.resourceFor(&gvk)
+		gvr, rErr := k.ResourceFor(&gvk)
 		if rErr != nil {
 			return nil, rErr
 		}
@@ -162,7 +163,7 @@ func (k *Kubernetes) resourcesCreateOrUpdate(ctx context.Context, resources []*u
 			namespace = k.NamespaceOrDefault(namespace)
 		}
 
-		if err := k.canClientAccess(ctx, gvr, obj.GetName(), namespace, "patch", ""); err != nil {
+		if err := k.CanClientAccess(ctx, gvr, obj.GetName(), namespace, "patch", ""); err != nil {
 			return nil, err
 		}
 
@@ -180,7 +181,7 @@ func (k *Kubernetes) resourcesCreateOrUpdate(ctx context.Context, resources []*u
 	return resources, nil
 }
 
-func (k *Kubernetes) resourceFor(gvk *schema.GroupVersionKind) (*schema.GroupVersionResource, error) {
+func (k *Kubernetes) ResourceFor(gvk *schema.GroupVersionKind) (*schema.GroupVersionResource, error) {
 	m, err := k.manager.accessControlRESTMapper.RESTMapping(schema.GroupKind{Group: gvk.Group, Kind: gvk.Kind}, gvk.Version)
 	if err != nil {
 		return nil, err
@@ -208,7 +209,7 @@ func (k *Kubernetes) supportsGroupVersion(groupVersion string) bool {
 	return true
 }
 
-func (k *Kubernetes) canClientAccess(ctx context.Context, gvr *schema.GroupVersionResource, resourceName, namespace, verb, subResource string) error {
+func (k *Kubernetes) CanClientAccess(ctx context.Context, gvr *schema.GroupVersionResource, resourceName, namespace, verb, subResource string) error {
 	if !k.manager.staticConfig.RequireOAuth {
 		return nil
 	}
@@ -223,7 +224,7 @@ func (k *Kubernetes) canClientAccess(ctx context.Context, gvr *schema.GroupVersi
 	}
 	groups := ctx.Value("X-User-Groups")
 	if groups == nil {
-		return fmt.Errorf("user groups are not set")
+		groups = []string{}
 	}
 	userGroups := strings.Split(groups.(string), ",")
 
@@ -254,6 +255,7 @@ func (k *Kubernetes) canClientAccess(ctx context.Context, gvr *schema.GroupVersi
 	if !response.Status.Allowed {
 		return fmt.Errorf("user %q does not have permission to %s %s", userName, verb, resourceName)
 	}
+	klog.V(2).Infof("User %q has permission to %s %s in namespace %s", userName, verb, resourceName, namespace)
 	return nil
 }
 

@@ -3,9 +3,13 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/yaml"
 )
 
 func (s *Server) initHelm() []server.ServerTool {
@@ -65,6 +69,12 @@ func (s *Server) helmInstall(ctx context.Context, ctr mcp.CallToolRequest) (*mcp
 	if v, ok := ctr.GetArguments()["namespace"].(string); ok {
 		namespace = v
 	}
+
+	// Pre-flight authorization: Check permissions for all resources that will be created
+	if err := s.checkHelmInstallPermissions(ctx, chart, values, name, namespace); err != nil {
+		return NewTextResult("", fmt.Errorf("failed to install helm chart '%s': authorization failed: %w", chart, err)), nil
+	}
+
 	ret, err := s.k.Derived(ctx).NewHelm().Install(ctx, chart, values, name, namespace)
 	if err != nil {
 		return NewTextResult("", fmt.Errorf("failed to install helm chart '%s': %w", chart, err)), nil
@@ -81,6 +91,16 @@ func (s *Server) helmList(ctx context.Context, ctr mcp.CallToolRequest) (*mcp.Ca
 	if v, ok := ctr.GetArguments()["namespace"].(string); ok {
 		namespace = v
 	}
+
+	secretsGVR := &schema.GroupVersionResource{
+		Group:    "",
+		Version:  "v1",
+		Resource: "secrets",
+	}
+	if err := s.k.Derived(ctx).CanClientAccess(ctx, secretsGVR, "", namespace, "list", ""); err != nil {
+		return NewTextResult("", fmt.Errorf("failed to list helm releases in namespace '%s': authorization failed: %w", namespace, err)), nil
+	}
+
 	ret, err := s.k.Derived(ctx).NewHelm().List(namespace, allNamespaces)
 	if err != nil {
 		return NewTextResult("", fmt.Errorf("failed to list helm releases in namespace '%s': %w", namespace, err)), nil
@@ -98,9 +118,99 @@ func (s *Server) helmUninstall(ctx context.Context, ctr mcp.CallToolRequest) (*m
 	if v, ok := ctr.GetArguments()["namespace"].(string); ok {
 		namespace = v
 	}
+
+	if err := s.checkHelmUninstallPermissions(ctx, name, namespace); err != nil {
+		return NewTextResult("", fmt.Errorf("failed to uninstall helm chart '%s': authorization failed: %w", name, err)), nil
+	}
+
 	ret, err := s.k.Derived(ctx).NewHelm().Uninstall(name, namespace)
 	if err != nil {
 		return NewTextResult("", fmt.Errorf("failed to uninstall helm chart '%s': %w", name, err)), nil
 	}
 	return NewTextResult(ret, err), nil
+}
+
+// checkHelmInstallPermissions performs pre-flight authorization check by rendering templates and checking user permissions
+func (s *Server) checkHelmInstallPermissions(ctx context.Context, chart string, values map[string]interface{}, name, namespace string) error {
+	renderedManifests, err := s.renderHelmChart(ctx, chart, values, name, namespace)
+	if err != nil {
+		return fmt.Errorf("failed to render helm chart templates: %w", err)
+	}
+
+	return s.checkManifestPermissions(ctx, renderedManifests, namespace, "create")
+}
+
+// renderHelmChart renders the Helm chart templates using dry-run mode
+func (s *Server) renderHelmChart(ctx context.Context, chart string, values map[string]interface{}, name, namespace string) (string, error) {
+	helm := s.k.Derived(ctx).NewHelm()
+
+	renderedManifests, err := helm.RenderTemplateDryRun(ctx, chart, values, name, namespace)
+	if err != nil {
+		return "", fmt.Errorf("failed to render helm chart templates: %w", err)
+	}
+
+	return renderedManifests, nil
+}
+
+func (s *Server) checkHelmUninstallPermissions(ctx context.Context, name, namespace string) error {
+	helm := s.k.Derived(ctx).NewHelm()
+	releaseManifests, err := helm.GetReleaseManifests(name, namespace)
+	if err != nil {
+		secretsGVR := &schema.GroupVersionResource{
+			Group:    "",
+			Version:  "v1",
+			Resource: "secrets",
+		}
+		return s.k.Derived(ctx).CanClientAccess(ctx, secretsGVR, "", namespace, "delete", "")
+	}
+
+	return s.checkManifestPermissions(ctx, releaseManifests, namespace, "delete")
+}
+
+// checkManifestPermissions checks if the user has permissions for all resources in the manifests
+func (s *Server) checkManifestPermissions(ctx context.Context, manifests, namespace, verb string) error {
+	if manifests == "" {
+		secretsGVR := &schema.GroupVersionResource{
+			Group:    "",
+			Version:  "v1",
+			Resource: "secrets",
+		}
+		return s.k.Derived(ctx).CanClientAccess(ctx, secretsGVR, "", namespace, verb, "")
+	}
+
+	separator := "---"
+	manifestList := strings.Split(manifests, separator)
+
+	for _, manifest := range manifestList {
+		manifest = strings.TrimSpace(manifest)
+		if manifest == "" {
+			continue
+		}
+
+		var obj unstructured.Unstructured
+		if err := yaml.Unmarshal([]byte(manifest), &obj); err != nil {
+			return fmt.Errorf("failed to parse manifest: %w", err)
+		}
+
+		if obj.Object == nil {
+			continue
+		}
+
+		gvk := obj.GroupVersionKind()
+		resourceNamespace := obj.GetNamespace()
+		if resourceNamespace == "" {
+			resourceNamespace = namespace
+		}
+
+		gvr, err := s.k.Derived(ctx).ResourceFor(&gvk)
+		if err != nil {
+			return fmt.Errorf("failed to get resource info for %s: %w", gvk.String(), err)
+		}
+
+		if err := s.k.Derived(ctx).CanClientAccess(ctx, gvr, obj.GetName(), resourceNamespace, verb, ""); err != nil {
+			return fmt.Errorf("insufficient permissions for %s %s/%s in namespace %s: %w", verb, gvk.Kind, obj.GetName(), resourceNamespace, err)
+		}
+	}
+
+	return nil
 }

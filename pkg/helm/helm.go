@@ -3,15 +3,16 @@ package helm
 import (
 	"context"
 	"fmt"
+	"log"
+	"time"
+
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/registry"
 	"helm.sh/helm/v3/pkg/release"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
-	"log"
 	"sigs.k8s.io/yaml"
-	"time"
 )
 
 type Kubernetes interface {
@@ -60,6 +61,57 @@ func (h *Helm) Install(ctx context.Context, chart string, values map[string]inte
 		return "", err
 	}
 	return string(ret), nil
+}
+
+// RenderTemplateDryRun renders a Helm chart template using dry-run mode to see what resources will be created
+func (h *Helm) RenderTemplateDryRun(ctx context.Context, chart string, values map[string]interface{}, name string, namespace string) (string, error) {
+	cfg, err := h.newAction(h.kubernetes.NamespaceOrDefault(namespace), false)
+	if err != nil {
+		return "", err
+	}
+	install := action.NewInstall(cfg)
+	if name == "" {
+		install.GenerateName = true
+		install.ReleaseName, _, _ = install.NameAndChart([]string{chart})
+	} else {
+		install.ReleaseName = name
+	}
+	install.Namespace = h.kubernetes.NamespaceOrDefault(namespace)
+	install.Wait = false
+	install.Timeout = 5 * time.Minute
+	install.DryRun = true
+
+	chartRequested, err := install.ChartPathOptions.LocateChart(chart, cli.New())
+	if err != nil {
+		return "", err
+	}
+	chartLoaded, err := loader.Load(chartRequested)
+	if err != nil {
+		return "", err
+	}
+
+	dryRunRelease, err := install.RunWithContext(ctx, chartLoaded, values)
+	if err != nil {
+		return "", err
+	}
+
+	return dryRunRelease.Manifest, nil
+}
+
+// GetReleaseManifests gets the manifests for an existing Helm release
+func (h *Helm) GetReleaseManifests(name string, namespace string) (string, error) {
+	cfg, err := h.newAction(h.kubernetes.NamespaceOrDefault(namespace), false)
+	if err != nil {
+		return "", err
+	}
+
+	get := action.NewGet(cfg)
+	release, err := get.Run(name)
+	if err != nil {
+		return "", err
+	}
+
+	return release.Manifest, nil
 }
 
 // List lists all the releases for the specified namespace (or current namespace if). Or allNamespaces is true, it lists all releases across all namespaces.
