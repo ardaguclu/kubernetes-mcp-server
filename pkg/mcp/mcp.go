@@ -21,6 +21,7 @@ import (
 )
 
 const TokenScopesContextKey = "TokenScopesContextKey"
+const UserInfoContextKey = "UserInfoContextKey"
 
 type Configuration struct {
 	Profile    Profile
@@ -63,6 +64,8 @@ func NewServer(configuration Configuration) (*Server, error) {
 	)
 	if configuration.StaticConfig.RequireOAuth {
 		serverOptions = append(serverOptions, server.WithToolHandlerMiddleware(toolScopedAuthorizationMiddleware))
+		// Add RBAC validation middleware
+		serverOptions = append(serverOptions, server.WithToolHandlerMiddleware(RBACValidationMiddleware))
 	}
 
 	s := &Server{
@@ -177,7 +180,25 @@ func contextFunc(ctx context.Context, r *http.Request) context.Context {
 		return context.WithValue(ctx, internalk8s.OAuthAuthorizationHeader, customAuthHeader)
 	}
 
+	// Extract user info from context if available
+	if userInfo, ok := r.Context().Value(UserInfoContextKey).(*authenticationapiv1.UserInfo); ok {
+		ctx = context.WithValue(ctx, UserInfoContextKey, userInfo)
+	}
+
 	return ctx
+}
+
+// getUserAwareManager creates a user-aware manager if user info is available in context
+func (s *Server) getUserAwareManager(ctx context.Context) (*internalk8s.Manager, error) {
+	userInfo, ok := ctx.Value(UserInfoContextKey).(*authenticationapiv1.UserInfo)
+	if !ok || userInfo == nil {
+		// No user info available, use the base manager
+		return s.k, nil
+	}
+
+	// For now, we'll use the base manager but with user impersonation
+	// The user-aware functionality will be implemented in the individual tool handlers
+	return s.k, nil
 }
 
 func toolCallLoggingMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {

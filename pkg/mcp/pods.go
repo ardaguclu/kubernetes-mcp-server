@@ -8,6 +8,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	authenticationapiv1 "k8s.io/api/authentication/v1"
 	"k8s.io/kubectl/pkg/metricsutil"
 
 	"github.com/containers/kubernetes-mcp-server/pkg/kubernetes"
@@ -129,10 +130,25 @@ func (s *Server) podsListInAllNamespaces(ctx context.Context, ctr mcp.CallToolRe
 	if labelSelector != nil {
 		resourceListOptions.LabelSelector = labelSelector.(string)
 	}
-	derived, err := s.k.Derived(ctx)
+
+	// Use user-aware manager if available
+	userInfo, ok := ctx.Value(UserInfoContextKey).(*authenticationapiv1.UserInfo)
+	var derived *kubernetes.Kubernetes
+	var err error
+
+	if ok && userInfo != nil {
+		// Create user-aware manager with impersonation
+		userAwareManager := kubernetes.NewUserAwareManager(s.k, userInfo)
+		derived, err = userAwareManager.Derived(ctx)
+	} else {
+		// Use base manager
+		derived, err = s.k.Derived(ctx)
+	}
+
 	if err != nil {
 		return nil, err
 	}
+
 	ret, err := derived.PodsListInAllNamespaces(ctx, resourceListOptions)
 	if err != nil {
 		return NewTextResult("", fmt.Errorf("failed to list pods in all namespaces: %v", err)), nil
