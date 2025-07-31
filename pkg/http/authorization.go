@@ -9,13 +9,15 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
+	authenticationv1api "k8s.io/api/authentication/v1"
 	"k8s.io/klog/v2"
 
 	"github.com/containers/kubernetes-mcp-server/pkg/mcp"
 )
 
 const (
-	Audience = "kubernetes-mcp-server"
+	Audience           = "kubernetes-mcp-server"
+	UserInfoContextKey = "UserInfoContextKey"
 )
 
 // AuthorizationMiddleware validates the OAuth flow using Kubernetes TokenReview API
@@ -85,35 +87,23 @@ func AuthorizationMiddleware(requireOAuth bool, serverURL string, oidcProvider *
 				}
 			}
 
+			// Extract user information from JWT claims (after OIDC validation)
+			userInfo, err := extractUserInfoFromClaims(claims)
+			if err != nil {
+				klog.V(1).Infof("Authentication failed - failed to extract user info from JWT claims: %s %s from %s, error: %v", r.Method, r.URL.Path, r.RemoteAddr, err)
+				http.Error(w, "Unauthorized: Invalid token claims", http.StatusUnauthorized)
+				return
+			}
+
 			// Scopes are likely to be used for authorization.
 			scopes := claims.GetScopes()
-			klog.V(2).Infof("JWT token validated - Scopes: %v", scopes)
-			r = r.WithContext(context.WithValue(r.Context(), mcp.TokenScopesContextKey, scopes))
+			klog.V(2).Infof("JWT token validated - User: %s, Scopes: %v", userInfo.Username, scopes)
 
-			// Now, there are a couple of options:
-			// 1. If there is no authorization url configured for this MCP Server,
-			// that means this token will be used against the Kubernetes API Server.
-			// So that we need to validate the token using Kubernetes TokenReview API beforehand.
-			// 2. If there is an authorization url configured for this MCP Server,
-			// that means up to this point, the token is validated against the OIDC Provider already.
-			// 2. a. If this is the only token in the headers, this validated token
-			// is supposed to be used against the Kubernetes API Server as well. Therefore,
-			// TokenReview request must succeed.
-			// 2. b. If this is not the only token in the headers, the token in here is used
-			// only for authentication and authorization. Therefore, we need to send TokenReview request
-			// with the other token in the headers (TODO: still need to validate aud and exp of this token separately).
-			/*_, _, err = mcpServer.VerifyTokenAPIServer(r.Context(), token, audience)
-			if err != nil {
-				klog.V(1).Infof("Authentication failed - API Server token validation error: %s %s from %s, error: %v", r.Method, r.URL.Path, r.RemoteAddr, err)
-
-				if serverURL == "" {
-					w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer realm="Kubernetes MCP Server", audience="%s", error="invalid_token"`, audience))
-				} else {
-					w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer realm="Kubernetes MCP Server", audience="%s"", resource_metadata="%s%s", error="invalid_token"`, audience, serverURL, oauthProtectedResourceEndpoint))
-				}
-				http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
-				return
-			}*/
+			// Pass both scopes and user info through context
+			ctx := r.Context()
+			ctx = context.WithValue(ctx, mcp.TokenScopesContextKey, scopes)
+			ctx = context.WithValue(ctx, UserInfoContextKey, userInfo)
+			r = r.WithContext(ctx)
 
 			next.ServeHTTP(w, r)
 		})
@@ -138,7 +128,8 @@ var allSignatureAlgorithms = []jose.SignatureAlgorithm{
 
 type JWTClaims struct {
 	jwt.Claims
-	Scope string `json:"scope,omitempty"`
+	Scope  string   `json:"scope,omitempty"`
+	Groups []string `json:"groups,omitempty"`
 }
 
 func (c *JWTClaims) GetScopes() []string {
@@ -176,4 +167,33 @@ func validateTokenWithOIDC(ctx context.Context, provider *oidc.Provider, token, 
 	}
 
 	return nil
+}
+
+// extractUserInfoFromClaims extracts user information from JWT claims
+func extractUserInfoFromClaims(claims *JWTClaims) (*authenticationv1api.UserInfo, error) {
+	// Extract username from JWT claims
+	username := claims.Subject
+	if username == "" {
+		return nil, fmt.Errorf("missing subject claim in JWT token")
+	}
+
+	// Extract groups from JWT claims
+	var groups []string
+	if claims.Groups != nil {
+		groups = claims.Groups
+	}
+
+	// Extract extra information from JWT claims
+	extra := make(map[string]authenticationv1api.ExtraValue)
+	if claims.Scope != "" {
+		extra["scope"] = authenticationv1api.ExtraValue(strings.Fields(claims.Scope))
+	}
+
+	userInfo := &authenticationv1api.UserInfo{
+		Username: username,
+		Groups:   groups,
+		Extra:    extra,
+	}
+
+	return userInfo, nil
 }

@@ -196,3 +196,7 @@ func (k *Kubernetes) NewHelm() *helm.Helm {
 	// This is a derived Kubernetes, so it already has the Helm initialized
 	return helm.NewHelm(k.manager)
 }
+
+func (m *Manager) NewHelm() *helm.Helm {
+	return helm.NewHelm(m)
+}

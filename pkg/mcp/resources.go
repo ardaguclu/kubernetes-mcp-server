@@ -7,10 +7,12 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	authenticationapiv1 "k8s.io/api/authentication/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/containers/kubernetes-mcp-server/pkg/kubernetes"
 	"github.com/containers/kubernetes-mcp-server/pkg/output"
+	"k8s.io/klog/v2"
 )
 
 func (s *Server) initResources() []server.ServerTool {
@@ -128,10 +130,26 @@ func (s *Server) resourcesList(ctx context.Context, ctr mcp.CallToolRequest) (*m
 		return NewTextResult("", fmt.Errorf("namespace is not a string")), nil
 	}
 
-	derived, err := s.k.Derived(ctx)
-	if err != nil {
-		return nil, err
+	// Use user-aware manager if available
+	userInfo, ok := ctx.Value(UserInfoContextKey).(*authenticationapiv1.UserInfo)
+	var derived *kubernetes.Kubernetes
+	var err2 error
+
+	if ok && userInfo != nil {
+		// Create user-aware manager with impersonation
+		klog.V(4).Infof("Using user-aware manager for user: %s", userInfo.Username)
+		userAwareManager := kubernetes.NewUserAwareManager(s.k, userInfo)
+		derived, err2 = userAwareManager.Derived(ctx)
+	} else {
+		// Use base manager
+		klog.V(4).Infof("No user info available, using base manager")
+		derived, err2 = s.k.Derived(ctx)
 	}
+
+	if err2 != nil {
+		return nil, err2
+	}
+
 	ret, err := derived.ResourcesList(ctx, gvk, ns, resourceListOptions)
 	if err != nil {
 		return NewTextResult("", fmt.Errorf("failed to list resources: %v", err)), nil
@@ -163,10 +181,24 @@ func (s *Server) resourcesGet(ctx context.Context, ctr mcp.CallToolRequest) (*mc
 		return NewTextResult("", fmt.Errorf("name is not a string")), nil
 	}
 
-	derived, err := s.k.Derived(ctx)
-	if err != nil {
-		return nil, err
+	// Use user-aware manager if available
+	userInfo, ok := ctx.Value(UserInfoContextKey).(*authenticationapiv1.UserInfo)
+	var derived *kubernetes.Kubernetes
+	var err2 error
+
+	if ok && userInfo != nil {
+		// Create user-aware manager with impersonation
+		userAwareManager := kubernetes.NewUserAwareManager(s.k, userInfo)
+		derived, err2 = userAwareManager.Derived(ctx)
+	} else {
+		// Use base manager
+		derived, err2 = s.k.Derived(ctx)
 	}
+
+	if err2 != nil {
+		return nil, err2
+	}
+
 	ret, err := derived.ResourcesGet(ctx, gvk, ns, n)
 	if err != nil {
 		return NewTextResult("", fmt.Errorf("failed to get resource: %v", err)), nil
@@ -185,10 +217,24 @@ func (s *Server) resourcesCreateOrUpdate(ctx context.Context, ctr mcp.CallToolRe
 		return NewTextResult("", fmt.Errorf("resource is not a string")), nil
 	}
 
-	derived, err := s.k.Derived(ctx)
+	// Use user-aware manager if available
+	userInfo, ok := ctx.Value(UserInfoContextKey).(*authenticationapiv1.UserInfo)
+	var derived *kubernetes.Kubernetes
+	var err error
+
+	if ok && userInfo != nil {
+		// Create user-aware manager with impersonation
+		userAwareManager := kubernetes.NewUserAwareManager(s.k, userInfo)
+		derived, err = userAwareManager.Derived(ctx)
+	} else {
+		// Use base manager
+		derived, err = s.k.Derived(ctx)
+	}
+
 	if err != nil {
 		return nil, err
 	}
+
 	resources, err := derived.ResourcesCreateOrUpdate(ctx, r)
 	if err != nil {
 		return NewTextResult("", fmt.Errorf("failed to create or update resources: %v", err)), nil
@@ -224,15 +270,29 @@ func (s *Server) resourcesDelete(ctx context.Context, ctr mcp.CallToolRequest) (
 		return NewTextResult("", fmt.Errorf("name is not a string")), nil
 	}
 
-	derived, err := s.k.Derived(ctx)
-	if err != nil {
-		return nil, err
+	// Use user-aware manager if available
+	userInfo, ok := ctx.Value(UserInfoContextKey).(*authenticationapiv1.UserInfo)
+	var derived *kubernetes.Kubernetes
+	var err2 error
+
+	if ok && userInfo != nil {
+		// Create user-aware manager with impersonation
+		userAwareManager := kubernetes.NewUserAwareManager(s.k, userInfo)
+		derived, err2 = userAwareManager.Derived(ctx)
+	} else {
+		// Use base manager
+		derived, err2 = s.k.Derived(ctx)
 	}
+
+	if err2 != nil {
+		return nil, err2
+	}
+
 	err = derived.ResourcesDelete(ctx, gvk, ns, n)
 	if err != nil {
 		return NewTextResult("", fmt.Errorf("failed to delete resource: %v", err)), nil
 	}
-	return NewTextResult("Resource deleted successfully", err), nil
+	return NewTextResult(fmt.Sprintf("Resource %s/%s deleted successfully", ns, n), nil), nil
 }
 
 func parseGroupVersionKind(arguments map[string]interface{}) (*schema.GroupVersionKind, error) {
