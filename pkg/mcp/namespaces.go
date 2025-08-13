@@ -4,15 +4,12 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
-
 	"github.com/containers/kubernetes-mcp-server/pkg/kubernetes"
 )
 
-func (s *Server) initNamespaces() []server.ServerTool {
-	ret := make([]server.ServerTool, 0)
-	ret = append(ret, server.ServerTool{
+func (s *Server) initNamespaces() []ToolWithHandler {
+	ret := make([]ToolWithHandler, 0)
+	ret = append(ret, ToolWithHandler{
 		Tool: mcp.NewTool("namespaces_list",
 			mcp.WithDescription("List all the Kubernetes namespaces in the current cluster"),
 			// Tool annotations
@@ -23,7 +20,7 @@ func (s *Server) initNamespaces() []server.ServerTool {
 		), Handler: s.namespacesList,
 	})
 	if s.k.IsOpenShift(context.Background()) {
-		ret = append(ret, server.ServerTool{
+		ret = append(ret, ToolWithHandler{
 			Tool: mcp.NewTool("projects_list",
 				mcp.WithDescription("List all the OpenShift projects in the current cluster"),
 				// Tool annotations

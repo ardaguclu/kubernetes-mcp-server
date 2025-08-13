@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	authenticationapiv1 "k8s.io/api/authentication/v1"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
@@ -30,17 +30,17 @@ type Configuration struct {
 	StaticConfig *config.StaticConfig
 }
 
-func (c *Configuration) isToolApplicable(tool server.ServerTool) bool {
-	if c.StaticConfig.ReadOnly && !ptr.Deref(tool.Tool.Annotations.ReadOnlyHint, false) {
+func (c *Configuration) isToolApplicable(tool *mcp.Tool) bool {
+	if c.StaticConfig.ReadOnly && !tool.Annotations.ReadOnlyHint {
 		return false
 	}
-	if c.StaticConfig.DisableDestructive && ptr.Deref(tool.Tool.Annotations.DestructiveHint, false) {
+	if c.StaticConfig.DisableDestructive && ptr.Deref(tool.Annotations.DestructiveHint, false) {
 		return false
 	}
-	if c.StaticConfig.EnabledTools != nil && !slices.Contains(c.StaticConfig.EnabledTools, tool.Tool.Name) {
+	if c.StaticConfig.EnabledTools != nil && !slices.Contains(c.StaticConfig.EnabledTools, tool.Name) {
 		return false
 	}
-	if c.StaticConfig.DisabledTools != nil && slices.Contains(c.StaticConfig.DisabledTools, tool.Tool.Name) {
+	if c.StaticConfig.DisabledTools != nil && slices.Contains(c.StaticConfig.DisabledTools, tool.Name) {
 		return false
 	}
 	return true
@@ -48,31 +48,27 @@ func (c *Configuration) isToolApplicable(tool server.ServerTool) bool {
 
 type Server struct {
 	configuration *Configuration
-	server        *server.MCPServer
+	server        *mcp.Server
 	enabledTools  []string
 	k             *internalk8s.Manager
 }
 
 func NewServer(configuration Configuration) (*Server, error) {
-	var serverOptions []server.ServerOption
-	serverOptions = append(serverOptions,
-		server.WithResourceCapabilities(true, true),
-		server.WithPromptCapabilities(true),
-		server.WithToolCapabilities(true),
-		server.WithLogging(),
-		server.WithToolHandlerMiddleware(toolCallLoggingMiddleware),
-	)
+	serverImplementation := &mcp.Implementation{
+		Name:    version.BinaryName,
+		Title:   version.BinaryName,
+		Version: version.Version,
+	}
+	mcpServer := mcp.NewServer(serverImplementation, nil)
+
+	mcpServer.AddReceivingMiddleware(toolCallloggingMiddleware[*mcp.ServerSession])
 	if configuration.StaticConfig.RequireOAuth && false { // TODO: Disabled scope auth validation for now
-		serverOptions = append(serverOptions, server.WithToolHandlerMiddleware(toolScopedAuthorizationMiddleware))
+		mcpServer.AddReceivingMiddleware(toolScopedAuthorizationMiddleware)
 	}
 
 	s := &Server{
 		configuration: &configuration,
-		server: server.NewMCPServer(
-			version.BinaryName,
-			version.Version,
-			serverOptions...,
-		),
+		server:        mcpServer,
 	}
 	if err := s.reloadKubernetesClient(); err != nil {
 		return nil, err
@@ -88,20 +84,18 @@ func (s *Server) reloadKubernetesClient() error {
 		return err
 	}
 	s.k = k
-	applicableTools := make([]server.ServerTool, 0)
 	for _, tool := range s.configuration.Profile.GetTools(s) {
-		if !s.configuration.isToolApplicable(tool) {
+		if !s.configuration.isToolApplicable(tool.Tool) {
 			continue
 		}
-		applicableTools = append(applicableTools, tool)
+		s.server.AddTool(tool.Tool, tool.Handler)
 		s.enabledTools = append(s.enabledTools, tool.Tool.Name)
 	}
-	s.server.SetTools(applicableTools...)
 	return nil
 }
 
 func (s *Server) ServeStdio() error {
-	return server.ServeStdio(s.server)
+	return mcp.ServeStdio(s.server)
 }
 
 func (s *Server) ServeSse(baseUrl string, httpServer *http.Server) *server.SSEServer {
@@ -154,8 +148,7 @@ func NewTextResult(content string, err error) *mcp.CallToolResult {
 		return &mcp.CallToolResult{
 			IsError: true,
 			Content: []mcp.Content{
-				mcp.TextContent{
-					Type: "text",
+				&mcp.TextContent{
 					Text: err.Error(),
 				},
 			},
@@ -163,8 +156,7 @@ func NewTextResult(content string, err error) *mcp.CallToolResult {
 	}
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
-			mcp.TextContent{
-				Type: "text",
+			&mcp.TextContent{
 				Text: content,
 			},
 		},
@@ -187,28 +179,42 @@ func contextFunc(ctx context.Context, r *http.Request) context.Context {
 	return ctx
 }
 
-func toolCallLoggingMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
-	return func(ctx context.Context, ctr mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		klog.V(5).Infof("mcp tool call: %s(%v)", ctr.Params.Name, ctr.Params.Arguments)
-		if ctr.Header != nil {
-			buffer := bytes.NewBuffer(make([]byte, 0))
-			if err := ctr.Header.WriteSubset(buffer, map[string]bool{"Authorization": true, "authorization": true}); err == nil {
-				klog.V(7).Infof("mcp tool call headers: %s", buffer)
-			}
+func toolCallloggingMiddleware[S mcp.Session](handler mcp.MethodHandler[S]) mcp.MethodHandler[S] {
+	return func(ctx context.Context, s S, method string, params mcp.Params) (result mcp.Result, err error) {
+		if method != "callTool" {
+			return handler(ctx, s, method, params)
 		}
-		return next(ctx, ctr)
+
+		toolCallParams, ok := params.(*mcp.CallToolParams)
+		if !ok {
+			klog.Warning("invalid callTool params %s", params)
+			return handler(ctx, s, method, params)
+		}
+
+		// TODO: Log headers which exists in previous SDK
+
+		defer func() {
+			klog.V(5).Infof("callTool call name: %s arguments: %s result: %v", toolCallParams.Name, toolCallParams.Arguments, result)
+		}()
+		return handler(ctx, s, method, params)
 	}
 }
 
-func toolScopedAuthorizationMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
-	return func(ctx context.Context, ctr mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func toolScopedAuthorizationMiddleware[S mcp.Session](handler mcp.MethodHandler[S]) mcp.MethodHandler[S] {
+	return func(ctx context.Context, s S, method string, params mcp.Params) (result mcp.Result, err error) {
+		toolCallParams, ok := params.(*mcp.CallToolParams)
+		if !ok {
+			klog.Warning("invalid callTool params %s", params)
+			return handler(ctx, s, method, params)
+		}
 		scopes, ok := ctx.Value(TokenScopesContextKey).([]string)
 		if !ok {
-			return NewTextResult("", fmt.Errorf("authorization failed: Access denied: Tool '%s' requires scope 'mcp:%s' but no scope is available", ctr.Params.Name, ctr.Params.Name)), nil
+			return NewTextResult("", fmt.Errorf("authorization failed: Access denied: Tool '%s' requires scope 'mcp:%s' but no scope is available", toolCallParams.Name, toolCallParams.Name)), nil
 		}
-		if !slices.Contains(scopes, "mcp:"+ctr.Params.Name) && !slices.Contains(scopes, ctr.Params.Name) {
-			return NewTextResult("", fmt.Errorf("authorization failed: Access denied: Tool '%s' requires scope 'mcp:%s' but only scopes %s are available", ctr.Params.Name, ctr.Params.Name, scopes)), nil
+		if !slices.Contains(scopes, "mcp:"+toolCallParams.Name) && !slices.Contains(scopes, toolCallParams.Name) {
+			return NewTextResult("", fmt.Errorf("authorization failed: Access denied: Tool '%s' requires scope 'mcp:%s' but only scopes %s are available", toolCallParams.Name, toolCallParams.Name, scopes)), nil
 		}
-		return next(ctx, ctr)
+
+		return handler(ctx, s, method, params)
 	}
 }

@@ -3,13 +3,10 @@ package mcp
 import (
 	"context"
 	"fmt"
-
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 )
 
-func (s *Server) initHelm() []server.ServerTool {
-	return []server.ServerTool{
+func (s *Server) initHelm() []ToolWithHandler {
+	return []ToolWithHandler{
 		{Tool: mcp.NewTool("helm_install",
 			mcp.WithDescription("Install a Helm chart in the current or provided namespace"),
 			mcp.WithString("chart", mcp.Description("Chart reference to install (for example: stable/grafana, oci://ghcr.io/nginxinc/charts/nginx-ingress)"), mcp.Required()),

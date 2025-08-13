@@ -2,14 +2,12 @@ package mcp
 
 import (
 	"slices"
-
-	"github.com/mark3labs/mcp-go/server"
 )
 
 type Profile interface {
 	GetName() string
 	GetDescription() string
-	GetTools(s *Server) []server.ServerTool
+	GetTools(s *Server) []ToolWithHandler
 }
 
 var Profiles = []Profile{
@@ -35,7 +33,7 @@ func (p *FullProfile) GetName() string {
 func (p *FullProfile) GetDescription() string {
 	return "Complete profile with all tools and extended outputs"
 }
-func (p *FullProfile) GetTools(s *Server) []server.ServerTool {
+func (p *FullProfile) GetTools(s *Server) []ToolWithHandler {
 	return slices.Concat(
 		s.initConfiguration(),
 		s.initEvents(),

@@ -4,14 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
-
 	"github.com/containers/kubernetes-mcp-server/pkg/output"
 )
 
-func (s *Server) initEvents() []server.ServerTool {
-	return []server.ServerTool{
+func (s *Server) initEvents() []ToolWithHandler {
+	return []ToolWithHandler{
 		{Tool: mcp.NewTool("events_list",
 			mcp.WithDescription("List all the Kubernetes events in the current cluster from all namespaces"),
 			mcp.WithString("namespace",

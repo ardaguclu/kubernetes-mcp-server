@@ -6,16 +6,14 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 	"k8s.io/kubectl/pkg/metricsutil"
 
 	"github.com/containers/kubernetes-mcp-server/pkg/kubernetes"
 	"github.com/containers/kubernetes-mcp-server/pkg/output"
 )
 
-func (s *Server) initPods() []server.ServerTool {
-	return []server.ServerTool{
+func (s *Server) initPods() []ToolWithHandler {
+	return []ToolWithHandler{
 		{Tool: mcp.NewTool("pods_list",
 			mcp.WithDescription("List all the Kubernetes pods in the current cluster from all namespaces"),
 			mcp.WithString("labelSelector", mcp.Description("Optional Kubernetes label selector (e.g. 'app=myapp,env=prod' or 'app in (myapp,yourapp)'), use this option when you want to filter the pods by label"), mcp.Pattern("([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]")),

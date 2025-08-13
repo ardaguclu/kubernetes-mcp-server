@@ -4,14 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
-
 	"github.com/containers/kubernetes-mcp-server/pkg/output"
 )
 
 func (s *Server) initConfiguration() []server.ServerTool {
-	tools := []server.ServerTool{
+	tools := []ToolWithHandler{
 		{Tool: mcp.NewTool("configuration_view",
 			mcp.WithDescription("Get the current Kubernetes configuration content as a kubeconfig YAML"),
 			mcp.WithBoolean("minified", mcp.Description("Return a minified version of the configuration. "+
