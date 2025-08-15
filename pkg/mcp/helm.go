@@ -3,63 +3,76 @@ package mcp
 import (
 	"context"
 	"fmt"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"k8s.io/utils/ptr"
 )
 
 func (s *Server) initHelm() []ToolWithHandler {
 	return []ToolWithHandler{
-		{Tool: mcp.NewTool("helm_install",
-			mcp.WithDescription("Install a Helm chart in the current or provided namespace"),
-			mcp.WithString("chart", mcp.Description("Chart reference to install (for example: stable/grafana, oci://ghcr.io/nginxinc/charts/nginx-ingress)"), mcp.Required()),
-			mcp.WithObject("values", mcp.Description("Values to pass to the Helm chart (Optional)")),
-			mcp.WithString("name", mcp.Description("Name of the Helm release (Optional, random name if not provided)")),
-			mcp.WithString("namespace", mcp.Description("Namespace to install the Helm chart in (Optional, current namespace if not provided)")),
-			// Tool annotations
-			mcp.WithTitleAnnotation("Helm: Install"),
-			mcp.WithReadOnlyHintAnnotation(false),
-			mcp.WithDestructiveHintAnnotation(false),
-			mcp.WithIdempotentHintAnnotation(false), // TODO: consider replacing implementation with equivalent to: helm upgrade --install
-			mcp.WithOpenWorldHintAnnotation(true),
-		), Handler: s.helmInstall},
-		{Tool: mcp.NewTool("helm_list",
-			mcp.WithDescription("List all the Helm releases in the current or provided namespace (or in all namespaces if specified)"),
-			mcp.WithString("namespace", mcp.Description("Namespace to list Helm releases from (Optional, all namespaces if not provided)")),
-			mcp.WithBoolean("all_namespaces", mcp.Description("If true, lists all Helm releases in all namespaces ignoring the namespace argument (Optional)")),
-			// Tool annotations
-			mcp.WithTitleAnnotation("Helm: List"),
-			mcp.WithReadOnlyHintAnnotation(true),
-			mcp.WithDestructiveHintAnnotation(false),
-			mcp.WithOpenWorldHintAnnotation(true),
-		), Handler: s.helmList},
-		{Tool: mcp.NewTool("helm_uninstall",
-			mcp.WithDescription("Uninstall a Helm release in the current or provided namespace"),
-			mcp.WithString("name", mcp.Description("Name of the Helm release to uninstall"), mcp.Required()),
-			mcp.WithString("namespace", mcp.Description("Namespace to uninstall the Helm release from (Optional, current namespace if not provided)")),
-			// Tool annotations
-			mcp.WithTitleAnnotation("Helm: Uninstall"),
-			mcp.WithReadOnlyHintAnnotation(false),
-			mcp.WithDestructiveHintAnnotation(true),
-			mcp.WithIdempotentHintAnnotation(true),
-			mcp.WithOpenWorldHintAnnotation(true),
-		), Handler: s.helmUninstall},
+		{
+			Tool: &mcp.Tool{
+				Annotations: &mcp.ToolAnnotations{
+					DestructiveHint: ptr.To(false),
+					IdempotentHint:  false,
+					OpenWorldHint:   ptr.To(true),
+					ReadOnlyHint:    false,
+					Title:           "Helm: Install",
+				},
+				Description: "Install a Helm chart in the current or provided namespace",
+				Name:        "helm_install",
+				Title:       "Helm: Install",
+			},
+			Handler: s.helmInstall,
+		},
+		{
+			Tool: &mcp.Tool{
+				Annotations: &mcp.ToolAnnotations{
+					DestructiveHint: ptr.To(false),
+					OpenWorldHint:   ptr.To(true),
+					ReadOnlyHint:    true,
+					Title:           "Helm: List",
+				},
+				Description: "List all the Helm releases in the current or provided namespace (or in all namespaces if specified)",
+				Name:        "helm_list",
+				Title:       "Helm: List",
+			},
+			Handler: s.helmList,
+		},
+		{
+			Tool: &mcp.Tool{
+				Annotations: &mcp.ToolAnnotations{
+					DestructiveHint: ptr.To(true),
+					IdempotentHint:  true,
+					OpenWorldHint:   ptr.To(true),
+					ReadOnlyHint:    false,
+					Title:           "Helm: Uninstall",
+				},
+				Description: "Uninstall a Helm release in the current or provided namespace",
+				Name:        "helm_uninstall",
+				Title:       "Helm: Uninstall",
+			},
+			Handler: s.helmUninstall,
+		},
 	}
 }
 
-func (s *Server) helmInstall(ctx context.Context, ctr mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) helmInstall(ctx context.Context, req *mcp.ServerRequest[*mcp.CallToolParamsFor[map[string]any]]) (*mcp.CallToolResultFor[any], error) {
 	var chart string
 	ok := false
-	if chart, ok = ctr.GetArguments()["chart"].(string); !ok {
+	if chart, ok = req.Params.Arguments["chart"].(string); !ok {
 		return NewTextResult("", fmt.Errorf("failed to install helm chart, missing argument chart")), nil
 	}
 	values := map[string]interface{}{}
-	if v, ok := ctr.GetArguments()["values"].(map[string]interface{}); ok {
+	if v, ok := req.Params.Arguments["values"].(map[string]interface{}); ok {
 		values = v
 	}
 	name := ""
-	if v, ok := ctr.GetArguments()["name"].(string); ok {
+	if v, ok := req.Params.Arguments["name"].(string); ok {
 		name = v
 	}
 	namespace := ""
-	if v, ok := ctr.GetArguments()["namespace"].(string); ok {
+	if v, ok := req.Params.Arguments["namespace"].(string); ok {
 		namespace = v
 	}
 	derived, err := s.k.Derived(ctx)
@@ -73,13 +86,13 @@ func (s *Server) helmInstall(ctx context.Context, ctr mcp.CallToolRequest) (*mcp
 	return NewTextResult(ret, err), nil
 }
 
-func (s *Server) helmList(ctx context.Context, ctr mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) helmList(ctx context.Context, req *mcp.ServerRequest[*mcp.CallToolParamsFor[map[string]any]]) (*mcp.CallToolResultFor[any], error) {
 	allNamespaces := false
-	if v, ok := ctr.GetArguments()["all_namespaces"].(bool); ok {
+	if v, ok := req.Params.Arguments["all_namespaces"].(bool); ok {
 		allNamespaces = v
 	}
 	namespace := ""
-	if v, ok := ctr.GetArguments()["namespace"].(string); ok {
+	if v, ok := req.Params.Arguments["namespace"].(string); ok {
 		namespace = v
 	}
 	derived, err := s.k.Derived(ctx)
@@ -93,14 +106,14 @@ func (s *Server) helmList(ctx context.Context, ctr mcp.CallToolRequest) (*mcp.Ca
 	return NewTextResult(ret, err), nil
 }
 
-func (s *Server) helmUninstall(ctx context.Context, ctr mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) helmUninstall(ctx context.Context, req *mcp.ServerRequest[*mcp.CallToolParamsFor[map[string]any]]) (*mcp.CallToolResultFor[any], error) {
 	var name string
 	ok := false
-	if name, ok = ctr.GetArguments()["name"].(string); !ok {
+	if name, ok = req.Params.Arguments["name"].(string); !ok {
 		return NewTextResult("", fmt.Errorf("failed to uninstall helm chart, missing argument name")), nil
 	}
 	namespace := ""
-	if v, ok := ctr.GetArguments()["namespace"].(string); ok {
+	if v, ok := req.Params.Arguments["namespace"].(string); ok {
 		namespace = v
 	}
 	derived, err := s.k.Derived(ctx)

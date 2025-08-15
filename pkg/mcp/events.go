@@ -5,33 +5,39 @@ import (
 	"fmt"
 
 	"github.com/containers/kubernetes-mcp-server/pkg/output"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"k8s.io/utils/ptr"
 )
 
 func (s *Server) initEvents() []ToolWithHandler {
 	return []ToolWithHandler{
-		{Tool: mcp.NewTool("events_list",
-			mcp.WithDescription("List all the Kubernetes events in the current cluster from all namespaces"),
-			mcp.WithString("namespace",
-				mcp.Description("Optional Namespace to retrieve the events from. If not provided, will list events from all namespaces")),
-			// Tool annotations
-			mcp.WithTitleAnnotation("Events: List"),
-			mcp.WithReadOnlyHintAnnotation(true),
-			mcp.WithDestructiveHintAnnotation(false),
-			mcp.WithOpenWorldHintAnnotation(true),
-		), Handler: s.eventsList},
+		{
+			Tool: &mcp.Tool{
+				Annotations: &mcp.ToolAnnotations{
+					DestructiveHint: ptr.To(false),
+					OpenWorldHint:   ptr.To(true),
+					ReadOnlyHint:    true,
+					Title:           "Events: List",
+				},
+				Description: "List all the Kubernetes events in the current cluster from all namespaces",
+				Name:        "events_list",
+				Title:       "Events: List",
+			},
+			Handler: s.eventsList,
+		},
 	}
 }
 
-func (s *Server) eventsList(ctx context.Context, ctr mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	namespace := ctr.GetArguments()["namespace"]
-	if namespace == nil {
-		namespace = ""
+func (s *Server) eventsList(ctx context.Context, req *mcp.ServerRequest[*mcp.CallToolParamsFor[map[string]any]]) (*mcp.CallToolResultFor[any], error) {
+	namespace := ""
+	if val, ok := req.Params.Arguments["namespace"]; ok {
+		namespace = val.(string)
 	}
 	derived, err := s.k.Derived(ctx)
 	if err != nil {
 		return nil, err
 	}
-	eventMap, err := derived.EventsList(ctx, namespace.(string))
+	eventMap, err := derived.EventsList(ctx, namespace)
 	if err != nil {
 		return NewTextResult("", fmt.Errorf("failed to list events in all namespaces: %v", err)), nil
 	}

@@ -1,6 +1,6 @@
 package mcp
 
-import (
+/*import (
 	"bytes"
 	"context"
 	"errors"
@@ -325,4 +325,4 @@ func (s *Server) podsRun(ctx context.Context, ctr mcp.CallToolRequest) (*mcp.Cal
 		err = fmt.Errorf("failed to run pod: %v", err)
 	}
 	return NewTextResult("# The following resources (YAML) have been created or updated successfully\n"+marshalledYaml, err), nil
-}
+}*/

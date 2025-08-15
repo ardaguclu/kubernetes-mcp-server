@@ -5,31 +5,33 @@ import (
 	"fmt"
 
 	"github.com/containers/kubernetes-mcp-server/pkg/output"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"k8s.io/utils/ptr"
 )
 
-func (s *Server) initConfiguration() []server.ServerTool {
+func (s *Server) initConfiguration() []ToolWithHandler {
 	tools := []ToolWithHandler{
-		{Tool: mcp.NewTool("configuration_view",
-			mcp.WithDescription("Get the current Kubernetes configuration content as a kubeconfig YAML"),
-			mcp.WithBoolean("minified", mcp.Description("Return a minified version of the configuration. "+
-				"If set to true, keeps only the current-context and the relevant pieces of the configuration for that context. "+
-				"If set to false, all contexts, clusters, auth-infos, and users are returned in the configuration. "+
-				"(Optional, default true)")),
-			// Tool annotations
-			mcp.WithTitleAnnotation("Configuration: View"),
-			mcp.WithReadOnlyHintAnnotation(true),
-			mcp.WithDestructiveHintAnnotation(false),
-			mcp.WithOpenWorldHintAnnotation(true),
-		), Handler: s.configurationView},
+		{
+			Tool: &mcp.Tool{
+				Annotations: &mcp.ToolAnnotations{
+					DestructiveHint: ptr.To(false),
+					ReadOnlyHint:    true,
+					OpenWorldHint:   ptr.To(true),
+					Title:           "Configuration: View",
+				},
+				Description: "Get the current Kubernetes configuration content as a kubeconfig YAML",
+				Name:        "configuration_view",
+				Title:       "Configuration: View",
+			},
+			Handler: s.configurationView},
 	}
 	return tools
 }
 
-func (s *Server) configurationView(_ context.Context, ctr mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) configurationView(ctx context.Context, req *mcp.ServerRequest[*mcp.CallToolParamsFor[map[string]any]]) (*mcp.CallToolResultFor[any], error) {
 	minify := true
-	minified := ctr.GetArguments()["minified"]
-	if _, ok := minified.(bool); ok {
-		minify = minified.(bool)
+	if val, ok := req.Params.Arguments["minify"]; ok {
+		minify = val.(bool)
 	}
 	ret, err := s.k.ConfigurationView(minify)
 	if err != nil {

@@ -38,8 +38,8 @@ func (p *FullProfile) GetTools(s *Server) []ToolWithHandler {
 		s.initConfiguration(),
 		s.initEvents(),
 		s.initNamespaces(),
-		s.initPods(),
-		s.initResources(),
+		//s.initPods(),
+		//s.initResources(),
 		s.initHelm(),
 	)
 }

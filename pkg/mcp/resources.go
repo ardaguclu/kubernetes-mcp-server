@@ -1,6 +1,6 @@
 package mcp
 
-import (
+/*import (
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +9,7 @@ import (
 
 	"github.com/containers/kubernetes-mcp-server/pkg/kubernetes"
 	"github.com/containers/kubernetes-mcp-server/pkg/output"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func (s *Server) initResources() []ToolWithHandler {
@@ -253,4 +254,4 @@ func parseGroupVersionKind(arguments map[string]interface{}) (*schema.GroupVersi
 		return nil, errors.New("invalid argument apiVersion")
 	}
 	return &schema.GroupVersionKind{Group: gv.Group, Version: gv.Version, Kind: kind.(string)}, nil
-}
+}*/

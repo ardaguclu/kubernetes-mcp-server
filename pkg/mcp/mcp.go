@@ -1,12 +1,11 @@
 package mcp
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"slices"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	authenticationapiv1 "k8s.io/api/authentication/v1"
@@ -61,7 +60,7 @@ func NewServer(configuration Configuration) (*Server, error) {
 	}
 	mcpServer := mcp.NewServer(serverImplementation, nil)
 
-	mcpServer.AddReceivingMiddleware(toolCallloggingMiddleware[*mcp.ServerSession])
+	mcpServer.AddReceivingMiddleware(toolCallloggingMiddleware)
 	if configuration.StaticConfig.RequireOAuth && false { // TODO: Disabled scope auth validation for now
 		mcpServer.AddReceivingMiddleware(toolScopedAuthorizationMiddleware)
 	}
@@ -88,32 +87,27 @@ func (s *Server) reloadKubernetesClient() error {
 		if !s.configuration.isToolApplicable(tool.Tool) {
 			continue
 		}
-		s.server.AddTool(tool.Tool, tool.Handler)
+		mcp.AddTool(s.server, tool.Tool, tool.Handler)
 		s.enabledTools = append(s.enabledTools, tool.Tool.Name)
 	}
 	return nil
 }
 
 func (s *Server) ServeStdio() error {
-	return mcp.ServeStdio(s.server)
+	t := &mcp.LoggingTransport{Transport: &mcp.StdioTransport{}, Writer: os.Stderr}
+	return s.server.Run(context.Background(), t)
 }
 
-func (s *Server) ServeSse(baseUrl string, httpServer *http.Server) *server.SSEServer {
-	options := make([]server.SSEOption, 0)
-	options = append(options, server.WithSSEContextFunc(contextFunc), server.WithHTTPServer(httpServer))
-	if baseUrl != "" {
-		options = append(options, server.WithBaseURL(baseUrl))
-	}
-	return server.NewSSEServer(s.server, options...)
+func (s *Server) ServeSse(baseUrl string) *mcp.SSEHandler {
+	// TODO: contextFunc is missing
+	// TODO: baseURL is non-functional
+	return mcp.NewSSEHandler(func(*http.Request) *mcp.Server { return s.server })
 }
 
-func (s *Server) ServeHTTP(httpServer *http.Server) *server.StreamableHTTPServer {
-	options := []server.StreamableHTTPOption{
-		server.WithHTTPContextFunc(contextFunc),
-		server.WithStreamableHTTPServer(httpServer),
-		server.WithStateLess(true),
-	}
-	return server.NewStreamableHTTPServer(s.server, options...)
+func (s *Server) ServeHTTP() *mcp.StreamableHTTPHandler {
+	// TODO: contextFunc is missing
+	// TODO: WithStateLess is missing
+	return mcp.NewStreamableHTTPHandler(func(request *http.Request) *mcp.Server { return s.server }, nil)
 }
 
 // KubernetesApiVerifyToken verifies the given token with the audience by
@@ -179,16 +173,20 @@ func contextFunc(ctx context.Context, r *http.Request) context.Context {
 	return ctx
 }
 
-func toolCallloggingMiddleware[S mcp.Session](handler mcp.MethodHandler[S]) mcp.MethodHandler[S] {
-	return func(ctx context.Context, s S, method string, params mcp.Params) (result mcp.Result, err error) {
+func toolCallloggingMiddleware(handler mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (result mcp.Result, err error) {
 		if method != "callTool" {
-			return handler(ctx, s, method, params)
+			return handler(ctx, method, req)
+		}
+		if req.GetParams() == nil {
+			klog.Warning("callTool: missing request parameters")
+			return handler(ctx, method, req)
 		}
 
-		toolCallParams, ok := params.(*mcp.CallToolParams)
+		toolCallParams, ok := req.GetParams().(*mcp.CallToolParams)
 		if !ok {
-			klog.Warning("invalid callTool params %s", params)
-			return handler(ctx, s, method, params)
+			klog.Warning("invalid callTool params %s", req.GetParams())
+			return handler(ctx, method, req)
 		}
 
 		// TODO: Log headers which exists in previous SDK
@@ -196,17 +194,26 @@ func toolCallloggingMiddleware[S mcp.Session](handler mcp.MethodHandler[S]) mcp.
 		defer func() {
 			klog.V(5).Infof("callTool call name: %s arguments: %s result: %v", toolCallParams.Name, toolCallParams.Arguments, result)
 		}()
-		return handler(ctx, s, method, params)
+		return handler(ctx, method, req)
 	}
 }
 
-func toolScopedAuthorizationMiddleware[S mcp.Session](handler mcp.MethodHandler[S]) mcp.MethodHandler[S] {
-	return func(ctx context.Context, s S, method string, params mcp.Params) (result mcp.Result, err error) {
-		toolCallParams, ok := params.(*mcp.CallToolParams)
-		if !ok {
-			klog.Warning("invalid callTool params %s", params)
-			return handler(ctx, s, method, params)
+func toolScopedAuthorizationMiddleware(handler mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (result mcp.Result, err error) {
+		if method != "callTool" {
+			return handler(ctx, method, req)
 		}
+		if req.GetParams() == nil {
+			klog.Warning("callTool: missing request parameters")
+			return handler(ctx, method, req)
+		}
+
+		toolCallParams, ok := req.GetParams().(*mcp.CallToolParams)
+		if !ok {
+			klog.Warning("invalid callTool params %s", req.GetParams())
+			return handler(ctx, method, req)
+		}
+
 		scopes, ok := ctx.Value(TokenScopesContextKey).([]string)
 		if !ok {
 			return NewTextResult("", fmt.Errorf("authorization failed: Access denied: Tool '%s' requires scope 'mcp:%s' but no scope is available", toolCallParams.Name, toolCallParams.Name)), nil
@@ -215,6 +222,6 @@ func toolScopedAuthorizationMiddleware[S mcp.Session](handler mcp.MethodHandler[
 			return NewTextResult("", fmt.Errorf("authorization failed: Access denied: Tool '%s' requires scope 'mcp:%s' but only scopes %s are available", toolCallParams.Name, toolCallParams.Name, scopes)), nil
 		}
 
-		return handler(ctx, s, method, params)
+		return handler(ctx, method, req)
 	}
 }

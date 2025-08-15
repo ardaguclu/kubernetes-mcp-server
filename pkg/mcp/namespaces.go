@@ -5,36 +5,47 @@ import (
 	"fmt"
 
 	"github.com/containers/kubernetes-mcp-server/pkg/kubernetes"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"k8s.io/utils/ptr"
 )
 
 func (s *Server) initNamespaces() []ToolWithHandler {
-	ret := make([]ToolWithHandler, 0)
-	ret = append(ret, ToolWithHandler{
-		Tool: mcp.NewTool("namespaces_list",
-			mcp.WithDescription("List all the Kubernetes namespaces in the current cluster"),
-			// Tool annotations
-			mcp.WithTitleAnnotation("Namespaces: List"),
-			mcp.WithReadOnlyHintAnnotation(true),
-			mcp.WithDestructiveHintAnnotation(false),
-			mcp.WithOpenWorldHintAnnotation(true),
-		), Handler: s.namespacesList,
-	})
+	tools := []ToolWithHandler{
+		{
+			Tool: &mcp.Tool{
+				Annotations: &mcp.ToolAnnotations{
+					DestructiveHint: ptr.To(false),
+					ReadOnlyHint:    true,
+					OpenWorldHint:   ptr.To(true),
+					Title:           "Namespaces: List",
+				},
+				Description: "List all the Kubernetes namespaces in the current cluster",
+				Name:        "namespaces_list",
+				Title:       "Namespaces: List",
+			},
+			Handler: s.namespacesList},
+	}
+
 	if s.k.IsOpenShift(context.Background()) {
-		ret = append(ret, ToolWithHandler{
-			Tool: mcp.NewTool("projects_list",
-				mcp.WithDescription("List all the OpenShift projects in the current cluster"),
-				// Tool annotations
-				mcp.WithTitleAnnotation("Projects: List"),
-				mcp.WithReadOnlyHintAnnotation(true),
-				mcp.WithDestructiveHintAnnotation(false),
-				mcp.WithOpenWorldHintAnnotation(true),
-			), Handler: s.projectsList,
+		tools = append(tools, ToolWithHandler{
+			Tool: &mcp.Tool{
+				Annotations: &mcp.ToolAnnotations{
+					DestructiveHint: ptr.To(false),
+					ReadOnlyHint:    true,
+					OpenWorldHint:   ptr.To(true),
+					Title:           "Projects: List",
+				},
+				Description: "List all the OpenShift projects in the current cluster",
+				Name:        "projects_list",
+				Title:       "Projects: List",
+			},
+			Handler: s.projectsList,
 		})
 	}
-	return ret
+	return tools
 }
 
-func (s *Server) namespacesList(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) namespacesList(ctx context.Context, req *mcp.ServerRequest[*mcp.CallToolParamsFor[map[string]any]]) (*mcp.CallToolResultFor[any], error) {
 	derived, err := s.k.Derived(ctx)
 	if err != nil {
 		return nil, err
@@ -46,7 +57,7 @@ func (s *Server) namespacesList(ctx context.Context, _ mcp.CallToolRequest) (*mc
 	return NewTextResult(s.configuration.ListOutput.PrintObj(ret)), nil
 }
 
-func (s *Server) projectsList(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) projectsList(ctx context.Context, req *mcp.ServerRequest[*mcp.CallToolParamsFor[map[string]any]]) (*mcp.CallToolResultFor[any], error) {
 	derived, err := s.k.Derived(ctx)
 	if err != nil {
 		return nil, err
